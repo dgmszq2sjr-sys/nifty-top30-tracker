@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Nifty Live Top 30 & Exit Tracker</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 30px; background-color: #f5f7fa; }
+        h2 { color: #1a365d; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 30px; background: white; }
+        th, td { padding: 12px; border: 1px solid #e2e8f0; text-align: left; }
+        th { background-color: #2b6cb0; color: white; }
+        tr:nth-child(even) { background-color: #f7fafc; }
+        .alert-box { background-color: #fff5f5; border-left: 4px solid #e53e3e; padding: 10px; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+
+    <h2>Live Nifty Top 30 Stocks</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Rank</th>
+                <th>Symbol</th>
+                <th>Company Name</th>
+                <th>CMP (₹)</th>
+                <th>Market Cap (Cr ₹)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for stock in top30 %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td><strong>{{ stock.symbol }}</strong></td>
+                <td>{{ stock.name }}</td>
+                <td>{{ "%.2f"|format(stock.price) }}</td>
+                <td>{{ "%.2f"|format(stock.market_cap / 10000000) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="alert-box">
+        <h2>Stocks Left Top 30 List (Past 35 Days)</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Company Name</th>
+                    <th>Current Price (₹)</th>
+                    <th>Current Market Cap (Cr ₹)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for stock in exited %}
+                <tr>
+                    <td><strong>{{ stock.symbol }}</strong></td>
+                    <td>{{ stock.name }}</td>
+                    <td>{{ "%.2f"|format(stock.price) }}</td>
+                    <td>{{ "%.2f"|format(stock.market_cap / 10000000) }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="4">No stocks dropped out of the Top 30 list in the past 35 days.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+</body>
+</html>
