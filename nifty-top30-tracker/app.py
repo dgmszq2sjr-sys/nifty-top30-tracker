@@ -16,7 +16,7 @@ def get_nifty500_tickers():
       )
   }
   try:
-    response = requests.get(url, headers=headers, timeout=5)
+    response = requests.get(url, headers=headers, timeout=10)
     df = pd.read_csv(pd.io.common.BytesIO(response.content))
     return [f"{symbol}.NS" for symbol in df["Symbol"].tolist()]
   except Exception as e:
@@ -28,18 +28,23 @@ NIFTY_UNIVERSE = get_nifty500_tickers()
 
 
 def fetch_single_ticker(ticker, start_date, end_date):
-  """Fetch data for one ticker quickly."""
+  """Fetch price history for a single stock with safe error handling."""
   try:
     df = yf.download(
         ticker,
         start=start_date,
         end=end_date,
         progress=False,
-        threads=False,
-        timeout=3,
+        auto_adjust=True,
     )
-    if not df.empty:
-      hist = df["Close"].dropna()
+    if not df.empty and "Close" in df.columns:
+      close_data = df["Close"]
+      # Handle cases where yfinance returns a DataFrame vs Series
+      if isinstance(close_data, pd.DataFrame):
+        hist = close_data.iloc[:, 0].dropna()
+      else:
+        hist = close_data.dropna()
+
       if not hist.empty:
         cmp = round(float(hist.iloc[-1]), 2)
         clean_symbol = ticker.replace(".NS", "")
@@ -50,8 +55,8 @@ def fetch_single_ticker(ticker, start_date, end_date):
             "market_cap": cmp * 1_000_000,
             "history": hist,
         }
-  except Exception:
-    pass
+  except Exception as e:
+    print(f"Failed to fetch {ticker}: {e}")
   return None
 
 
@@ -62,9 +67,9 @@ def fetch_stock_data():
   end_date = datetime.now()
   start_date = end_date - timedelta(days=45)
 
-  # Fetch tickers concurrently in parallel to beat Vercel's 10s limit
+  # Safe multi-threaded execution
   data = []
-  with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+  with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
     futures = [
         executor.submit(fetch_single_ticker, ticker, start_date, end_date)
         for ticker in NIFTY_UNIVERSE
@@ -82,16 +87,19 @@ def fetch_stock_data():
       by="market_cap", ascending=False
   ).reset_index(drop=True)
 
-  # Prepare top rankings
+  # Separate Top 500 records
   current_top = df_sorted.head(500)
   current_symbols = set(current_top["symbol"])
 
+  # Calculate 35-day historical movement safely
   historical_caps = []
   for _, row in df.iterrows():
     hist_series = row["history"]
     if len(hist_series) > 0:
-      past_price = hist_series.iloc[0]
-      curr_price = row["price"] if row["price"] > 0 else hist_series.iloc[-1]
+      past_price = float(hist_series.iloc[0])
+      curr_price = (
+          row["price"] if row["price"] > 0 else float(hist_series.iloc[-1])
+      )
       past_cap = (
           row["market_cap"] * (past_price / curr_price) if curr_price > 0 else 0
       )
@@ -106,9 +114,9 @@ def fetch_stock_data():
   exited_symbols = past_symbols - current_symbols
   exited_stocks = df[df["symbol"].isin(exited_symbols)].to_dict("records")
 
+  # Remove non-JSON serializable Pandas Series before passing to Flask Jinja template
   current_top_clean = current_top.drop(columns=["history"]).to_dict("records")
 
-  # Format ranks for UI template
   for rank, item in enumerate(current_top_clean, start=1):
     item["rank"] = rank
 
@@ -117,8 +125,13 @@ def fetch_stock_data():
 
 @app.route("/")
 def home():
-  top_live, exited_stocks = fetch_stock_data()
-  return render_template("index.html", top30=top_live, exited=exited_stocks)
+  try:
+    top_live, exited_stocks = fetch_stock_data()
+    return render_template("index.html", top30=top_live, exited=exited_stocks)
+  except Exception as e:
+    print(f"Runtime execution error: {e}")
+    # Return empty lists rather than letting Flask break with 500 Internal Server Error
+    return render_template("index.html", top30=[], exited=[])
 
 
 if __name__ == "__main__":
