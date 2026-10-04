@@ -1,21 +1,24 @@
-from flask import Flask, render_template, jsonify
-import yfinance as yf
+import requests
 import pandas as pd
+import yfinance as yf
 from datetime import datetime, timedelta
+from flask import Flask, render_template
 
 app = Flask(__name__)
 
 def get_nifty500_tickers():
-    """Fetch all 500 tickers dynamically from the official NSE India CSV."""
     url = "https://archives.nseindia.com/content/indices/ind_nifty500list.csv"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+    }
     try:
-        df = pd.read_csv(url)
+        response = requests.get(url, headers=headers)
+        df = pd.read_csv(pd.io.common.BytesIO(response.content))
         return [f"{symbol}.NS" for symbol in df['Symbol'].tolist()]
     except Exception as e:
         print(f"Error fetching NIFTY 500 list: {e}")
         return []
 
-# Universe set to NIFTY 500 tickers
 NIFTY_UNIVERSE = get_nifty500_tickers()
 
 def fetch_stock_data():
@@ -25,14 +28,24 @@ def fetch_stock_data():
     end_date = datetime.now()
     start_date = end_date - timedelta(days=45)
 
-    # Fast multi-threaded batch download for all 500 tickers
-    downloaded_data = yf.download(
-        tickers=NIFTY_UNIVERSE,
-        start=start_date,
-        end=end_date,
-        group_by='ticker',
-        threads=True
-    )
+    # Use a custom session with standard browser headers to pass Yahoo's crumb check
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+    })
+
+    try:
+        downloaded_data = yf.download(
+            tickers=NIFTY_UNIVERSE,
+            start=start_date,
+            end=end_date,
+            group_by='ticker',
+            threads=True,
+            session=session
+        )
+    except Exception as e:
+        print(f"Download failed: {e}")
+        return [], []
 
     data = []
     for ticker in NIFTY_UNIVERSE:
@@ -44,12 +57,11 @@ def fetch_stock_data():
                     cmp = round(hist.iloc[-1], 2)
                     clean_symbol = ticker.replace('.NS', '')
                     
-                    # Approximate market cap / price valuation
                     data.append({
                         'symbol': clean_symbol,
                         'name': clean_symbol,
                         'price': cmp,
-                        'market_cap': cmp * 1_000_000,  # Proxy market cap calculation
+                        'market_cap': cmp * 1_000_000,
                         'history': hist
                     })
         except Exception:
@@ -60,12 +72,10 @@ def fetch_stock_data():
 
     df = pd.DataFrame(data)
 
-    # Sort current Top 500 by Market Cap / Price
     df_sorted = df.sort_values(by='market_cap', ascending=False).reset_index(drop=True)
     current_top = df_sorted.head(500)
     current_symbols = set(current_top['symbol'])
 
-    # Determine historical ranks from 35 days ago
     historical_caps = []
     for idx, row in df.iterrows():
         hist_series = row['history']
@@ -81,11 +91,9 @@ def fetch_stock_data():
     past_top = df.sort_values(by='past_market_cap', ascending=False).head(500)
     past_symbols = set(past_top['symbol'])
 
-    # Identify stocks that exited during the last 35 days
     exited_symbols = past_symbols - current_symbols
     exited_stocks = df[df['symbol'].isin(exited_symbols)].to_dict('records')
 
-    # Remove non-serializable pandas Series before returning JSON-compatible dicts
     current_top_clean = current_top.drop(columns=['history']).to_dict('records')
 
     return current_top_clean, exited_stocks
